@@ -1,0 +1,60 @@
+version: '3'
+
+services:
+  elasticsearch:
+    image: elasticsearch:7.9.1
+    container_name: elk-elasticsearch
+    volumes:
+      - ./config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+    restart: unless-stopped
+    ports:
+      - 9200:9200
+    networks:
+      - elk-network
+
+  logstash:
+    image: logstash:7.9.1
+    container_name: elk-logstash
+    restart: unless-stopped
+    volumes:
+      - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    depends_on:
+      - elasticsearch
+    networks:
+      - elk-network
+
+  filebeat:
+    image: elastic/filebeat:7.9.1
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml
+      - ./logs/:/logs/
+    networks:
+      - elk-network
+
+  kibana:
+    image: kibana:7.9.1
+    restart: unless-stopped
+    depends_on:
+      - elasticsearch
+    ports:
+      - 5601:5601
+    networks:
+      - elk-network
+
+  golang:
+    image: golang:1.15-alpine
+    restart: unless-stopped
+    volumes:
+      - ./go:/go/src/elk
+      - ./logs/:/logs/
+    working_dir: /go/src/elk
+    command: go run main.go
+    networks:
+      - elk-network
+
+networks:
+  elk-network:
+    driver: bridge
