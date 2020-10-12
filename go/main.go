@@ -1,13 +1,12 @@
 package main
 
 import (
+	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"math/rand"
 	"os"
 	"strconv"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 const logFile = "/logs/app.log"
