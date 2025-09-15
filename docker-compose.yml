@@ -1,49 +1,139 @@
-version: '3'
+# services:
+#   elasticsearch:
+#     image: elasticsearch:7.9.1
+#     container_name: elk-elasticsearch
+#     volumes:
+#       - ./config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
+#     restart: unless-stopped
+#     ports:
+#       - 9200:9200
+#     networks:
+#       - elk-network
+
+#   logstash:
+#     image: logstash:7.9.1
+#     container_name: elk-logstash
+#     restart: unless-stopped
+#     volumes:
+#       - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+#     depends_on:
+#       - elasticsearch
+#     networks:
+#       - elk-network
+
+#   # filebeat:
+#   #   image: elastic/filebeat:7.9.1
+#   #   restart: unless-stopped
+#   #   depends_on:
+#   #     - elasticsearch
+#   #   volumes:
+#   #     - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml
+#   #     - ./logs/:/logs/
+#   #   networks:
+#   #     - elk-network
+
+#   kibana:
+#     image: kibana:7.9.1
+#     restart: unless-stopped
+#     depends_on:
+#       - elasticsearch
+#     ports:
+#       - 5601:5601
+#     networks:
+#       - elk-network
+
+#   golang:
+#     image: golang:1.15-alpine
+#     restart: unless-stopped
+#     volumes:
+#       - ./go:/go/src/elk
+#       - ./logs/:/logs/
+#     working_dir: /go/src/elk
+#     command: go run main.go
+#     networks:
+#       - elk-network
+
+# networks:
+#   elk-network:
+#     driver: bridge
+
 
 services:
-  elasticsearch:
-    image: elasticsearch:7.9.1
-    container_name: elk-elasticsearch
+  opensearch:
+    image: opensearchproject/opensearch:latest
+    container_name: opensearch
+    environment:
+      - cluster.name=opensearch-cluster
+      - node.name=opensearch-node1
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=adminpassword
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
     volumes:
-      - ./config/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro
-    restart: unless-stopped
+      - ./config/opensearch.yml:/usr/share/opensearch/config/opensearch.yml:ro
+      - opensearch-data:/usr/share/opensearch/data
     ports:
       - 9200:9200
     networks:
       - elk-network
 
-  logstash:
-    image: logstash:7.9.1
-    container_name: elk-logstash
-    restart: unless-stopped
-    volumes:
-      - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+  opensearch-dashboards:
+    image: opensearchproject/opensearch-dashboards:latest
+    container_name: opensearch-dashboards
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
     depends_on:
-      - elasticsearch
-    networks:
-      - elk-network
-
-  filebeat:
-    image: elastic/filebeat:7.9.1
-    restart: unless-stopped
-    depends_on:
-      - elasticsearch
-    volumes:
-      - ./config/filebeat.yml:/usr/share/filebeat/filebeat.yml
-      - ./logs/:/logs/
-    networks:
-      - elk-network
-
-  kibana:
-    image: kibana:7.9.1
-    restart: unless-stopped
-    depends_on:
-      - elasticsearch
+      - opensearch
     ports:
       - 5601:5601
     networks:
       - elk-network
 
+  logstash:
+    image: opensearchproject/logstash-oss-with-opensearch-output-plugin:latest
+    container_name: elk-logstash
+    volumes:
+      - ./config/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    depends_on:
+      - opensearch
+    ports:
+      - 12201:12201/udp 
+    networks:
+      - elk-network
+  
+  fluentd:
+    # image: fluent/fluentd:v1.19-debian
+    build: .
+    container_name: elk-fluentd
+    user: root
+    # command: >
+    #    sh -c "gem install fluent-plugin-opensearch fluent-plugin-gelf --no-document &&
+    #        exec fluentd -c /fluentd/etc/fluent.conf -p /fluentd/plugins"
+    volumes:
+      - ./config/fluent.conf:/fluentd/etc/fluent.conf:ro
+    depends_on:
+      - opensearch
+    restart: on-failure  
+    ports:
+      - 24224:24224/udp
+      - 24224:24224
+      - 9880:9880
+      #- 12201:12201/udp
+    networks:
+      - elk-network   
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 24224 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10  
+      start_period: 160s
   golang:
     image: golang:1.15-alpine
     restart: unless-stopped
@@ -52,9 +142,38 @@ services:
       - ./logs/:/logs/
     working_dir: /go/src/elk
     command: go run main.go
+    ports:
+     - 1212:1212
+    logging:
+      driver: gelf
+      options:
+        gelf-address: "udp://127.0.0.1:12201"
     networks:
       - elk-network
-
+  go:
+    image: golang:1.25-alpine
+    restart: unless-stopped
+    volumes:
+      - ./go:/go/src/elk
+      - ./logs/:/logs/
+    working_dir: /go/src/elk
+    command: go run main.go
+    ports:
+     - 1414:1414
+    logging:
+      driver: fluentd
+      options:
+        fluentd-address: "127.0.0.1:24224"
+        fluentd-tags: "go.app"
+    networks:
+      - elk-network 
+    depends_on:
+      fluentd:
+       condition: service_healthy    
+ 
 networks:
   elk-network:
     driver: bridge
+
+volumes:
+  opensearch-data:
