@@ -1,1 +1,1 @@
-Docker for an article about ELK
+Docker for an article about ELK/Openseaerch + Openseerch Dashboard + fluentd
